@@ -100,6 +100,7 @@ public class BufferedMutatorImpl implements BufferedMutator {
   private volatile boolean closed = false;
   private final AsyncProcess ap;
   private List<AsyncRequestFuture> asfList;
+  private int asfListSizeFactor;
   private int maxThreads;
   private ReentrantLock lock = new ReentrantLock();
 
@@ -125,7 +126,11 @@ public class BufferedMutatorImpl implements BufferedMutator {
         maxThreads = 1;
       }
     }
-    asfList = new ArrayList<AsyncRequestFuture>(maxThreads*4);
+    asfListSizeFactor = conf.getInt("hbase.client.asf.list.size.factor",4);
+    if (asfListSizeFactor < 2 || asfListSizeFactor > 10) {
+      asfListSizeFactor = 4;
+    }
+    asfList = new ArrayList<AsyncRequestFuture>(maxThreads*asfListSizeFactor);
     ConnectionConfiguration tableConf = new ConnectionConfiguration(conf);
     this.writeBufferSize =
             params.getWriteBufferSize() != UNSET ?
@@ -373,22 +378,23 @@ public class BufferedMutatorImpl implements BufferedMutator {
       } else {
         // Do some cleanup in asfList to decrease memory
         int nbRemoved = 0;
-        while (asfList.size() >= maxThreads*4) {
+        if (asfList.size() >= maxThreads*asfListSizeFactor) {
           synchronized(asfList) {
             Iterator<AsyncRequestFuture> it = asfList.iterator();
             while (it.hasNext()) {
               AsyncRequestFutureImpl toCheck = (AsyncRequestFutureImpl) it.next();
               if (toCheck.isFinished()) {
                 it.remove();
+                if (toCheck.hasError()) {
+                  errors.add(toCheck.getErrors());
+                }
                 nbRemoved++;
               }
             }
-            if (nbRemoved == 0) {
-              try {
-                Thread.sleep(1);
-              } catch (InterruptedException e) {
-                throw new InterruptedIOException(e.getMessage());
-              }
+            // By construction, nbRemoved is > 0 because asfListSizeFactor >= 2 and
+            // we can't have more than maxThreads running tasks
+            if (LOG.isDebugEnabled()) {
+              LOG.debug("Cleanup number of future removed from list: " + nbRemoved + " still running: " + asfList.size());
             }
           }
         }
