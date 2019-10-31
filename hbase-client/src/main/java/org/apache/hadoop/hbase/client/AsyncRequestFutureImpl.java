@@ -585,7 +585,7 @@ class AsyncRequestFutureImpl<CResult> implements AsyncRequestFuture {
               pool.submit(runnable);
               completed = true;
             } catch (Throwable t) {
-              if (t instanceof RejectedExecutionException) {
+              if (t instanceof RejectedExecutionException && !pool.isTerminated()) {
                 if ((nbTry % 1000) == 0) {
                   LOG.warn("#" + asyncProcess.id
                       + ", the task was rejected by the pool. This is unexpected." + " Server is "
